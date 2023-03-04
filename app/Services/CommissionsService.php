@@ -2,10 +2,9 @@
 
 namespace App\Services;
 
-
 use Carbon\Carbon;
 use Illuminate\Support\Collection;
-
+use Illuminate\Support\Facades\Cache;
 
 class CommissionsService
 {
@@ -21,60 +20,52 @@ class CommissionsService
     private const FREE_LIMIT_AMOUNT = 1000;
     private const FREE_LIMIT_NUM = 3;
     private array $usersFreeLimitAmount = [];
+    private object $exchangeRates;
 
-    public function calculations(Collection $sheet): array
+    public function __construct()
     {
-        $commissions = [];
+        $this->exchangeRates = Cache::remember('exchange_rates', 3600,
+            fn() => json_decode(json: file_get_contents(filename: self::EXCHANGE_URL))
+        );
+    }
 
-        // get lines from the csv sheet
-        foreach ($sheet as $row) {
-            $date = $row[0];
-            $userId = intval($row[1]);
-            $userType = $row[2];
-            $operationType = $row[3];
-            $amount = floatval($row[4]);
-            $currency = $row[5];
-
-            // calculate the fee for the operation deposit
-            if ($operationType === self::OPERATION_DEPOSIT) {
-                $commissions[] = $this->round(amount: $amount * self::FEE_DEPOSIT);
+    public function calculations(Collection $sheet): Collection
+    {
+        return $sheet->map(callback: function ($row) use ($sheet) {
+            // get the record from the csv sheet
+            [$date, $userId, $userType, $operationType, $amount, $currency] = $row;
+            switch ($operationType) {
+                case self::OPERATION_DEPOSIT:                   // calculate the fee for the operation deposit
+                    return $this->round(amount: $amount * self::FEE_DEPOSIT);
+                case self::OPERATION_WITHDRAW:
+                    if ($userType === self::USER_BUSINESS) {    // calculate the fee for the withdrawal business user
+                        return $this->round(amount: $amount * self::FEE_WITHDRAW_BUSINESS);
+                    }
+                    if ( $userType === self::USER_PRIVATE) {    // calculate the fee for the  withdrawal private user
+                        $amount = $this->getWithdrawPrivate(sheet: $sheet, userId: $userId, date: $date, amount: $amount, currency: $currency);
+                        return $this->round(amount: $amount * self::FEE_WITHDRAW_PRIVATE);
+                    }
+                    return null;
+                default:
+                    return null;
             }
-            // calculate the fee for the operation withdraw business user
-            elseif ($operationType === self::OPERATION_WITHDRAW && $userType === self::USER_BUSINESS) {
-                $commissions[] = $this->round(amount: $amount * self::FEE_WITHDRAW_BUSINESS);
-            }
-            // calculate the fee for the operation withdraw private user
-            elseif ($operationType === self::OPERATION_WITHDRAW && $userType === self::USER_PRIVATE) {
-                $amount = $this->getWithdrawPrivate(sheet: $sheet, userId: $userId, date: $date, amount: $amount, currency: $currency);
-                $commissions[] = $this->round(amount: $amount * self::FEE_WITHDRAW_PRIVATE);
-            }
-            // return null for other cases
-            else {
-                $commissions[] = null;
-            }
-        }
-        return $commissions;
+        });
     }
 
     private function getWithdrawPrivate(Collection $sheet, int $userId, string $date, float $amount, string $currency): float
     {
-        // start point for each user in the same week
-        $count = 0;
-        $weekStart = Carbon::parse(time: $date)->startOfWeek()->format(format: 'Y-m-d');
-
         // convert the currency if it's not EUR
         if ($currency != self::MAIN_CURRENCY) {
-            $amount = round($amount / $this->getExchange()->rates->{$currency}, 2);
+            $amount /= $this->exchangeRates->rates->{$currency};
         }
 
         // calculate the current operation for a user in the same week
-        foreach ($sheet as $row) {
-            if ($row[1] === $userId && $row[3] === self::OPERATION_WITHDRAW && $row[2] == self::USER_PRIVATE) {
-                if ($row[0] >= $weekStart && $row[0] <= $date) {
-                    $count++;
-                }
-            }
-        }
+        $count = $sheet->where('1', $userId)
+            ->where('3', self::OPERATION_WITHDRAW)
+            ->where('2', self::USER_PRIVATE)
+            ->where('0', '>=', Carbon::parse($date)->startOfWeek()->format('Y-m-d'))
+            ->where('0', '<=', $date)
+            ->count();
 
         // reset the free limit for each user in the beginning of the week
         if ($count === 1) {
@@ -89,20 +80,15 @@ class CommissionsService
 
         // convert back to original currency
         if ($currency != self::MAIN_CURRENCY) {
-            $amount = $amount * $this->getExchange()->rates->{$currency};
+            $amount *= $this->exchangeRates->rates->{$currency};
         }
 
         return $amount;
     }
 
-    private function getExchange(): mixed
-    {
-        return json_decode(file_get_contents(filename: self::EXCHANGE_URL));
-    }
-
     private function round(float $amount): string
     {
-        return number_format(round($amount, 2), 2, ",", "");
+        return number_format($amount, 2, ",", "");
     }
 }
 

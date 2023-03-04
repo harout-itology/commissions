@@ -30,7 +30,7 @@ class CsvController extends Controller
         }
 
         // import the SCV file
-        $csvFile = Excel::toCollection(import: new CsvImport(), filePath: $request->file('csv_file'));
+        $csvFile = Excel::toCollection(import: new CsvImport(), filePath: $request->file(key: 'csv_file'));
 
         // process the fist sheet only
         $commissions = $commissionsService->calculations(sheet: $csvFile[0]);
