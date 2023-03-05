@@ -20,14 +20,6 @@ class CommissionsService
     private const FREE_LIMIT_AMOUNT = 1000;
     private const FREE_LIMIT_NUM = 3;
     private array $usersFreeLimitAmount = [];
-    private object $exchangeRates;
-
-    public function __construct()
-    {
-        $this->exchangeRates = Cache::remember('exchange_rates', 3600,
-            fn() => json_decode(json: file_get_contents(filename: self::EXCHANGE_URL))
-        );
-    }
 
     public function calculations(Collection $sheet): Collection
     {
@@ -56,15 +48,15 @@ class CommissionsService
     {
         // convert the currency if it's not EUR
         if ($currency != self::MAIN_CURRENCY) {
-            $amount /= $this->exchangeRates->rates->{$currency};
+            $amount /= $this->exchangeRates()->rates->{$currency};
         }
 
         // calculate the current operation for a user in the same week
-        $count = $sheet->where('1', $userId)
-            ->where('3', self::OPERATION_WITHDRAW)
-            ->where('2', self::USER_PRIVATE)
-            ->where('0', '>=', Carbon::parse($date)->startOfWeek()->format('Y-m-d'))
-            ->where('0', '<=', $date)
+        $count = $sheet->where(1, $userId)
+            ->where(3, self::OPERATION_WITHDRAW)
+            ->where(2, self::USER_PRIVATE)
+            ->where(0, '>=', Carbon::parse($date)->startOfWeek()->format('Y-m-d'))
+            ->where(0, '<=', $date)
             ->count();
 
         // reset the free limit for each user in the beginning of the week
@@ -80,7 +72,7 @@ class CommissionsService
 
         // convert back to original currency
         if ($currency != self::MAIN_CURRENCY) {
-            $amount *= $this->exchangeRates->rates->{$currency};
+            $amount *= $this->exchangeRates()->rates->{$currency};
         }
 
         return $amount;
@@ -89,6 +81,13 @@ class CommissionsService
     private function round(float $amount): string
     {
         return number_format($amount, 2, ",", "");
+    }
+
+    public function exchangeRates(): mixed
+    {
+        return Cache::remember('exchange_rates', 3600,
+            fn() => json_decode(json: file_get_contents(filename: self::EXCHANGE_URL))
+        );
     }
 }
 
