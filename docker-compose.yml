@@ -1,8 +1,9 @@
 version: '3'
 services:
     laravel.test:
+        container_name: commissions-laravel.test-1
         build:
-            context: ./vendor/laravel/sail/runtimes/8.2
+            context: ./docker
             dockerfile: Dockerfile
             args:
                 WWWGROUP: '${WWWGROUP}'
@@ -24,6 +25,7 @@ services:
         depends_on:
             - memcached
     memcached:
+        container_name: commissions-memcached-1
         image: 'memcached:alpine'
         ports:
             - '${FORWARD_MEMCACHED_PORT:-11211}:11211'
